@@ -30,7 +30,12 @@ import org.audiveris.omr.constant.ConstantSet;
 import org.audiveris.omr.log.LogUtil;
 import org.audiveris.omr.plugin.Plugin;
 import org.audiveris.omr.plugin.PluginsManager;
+import org.audiveris.omr.score.resolution.PartResolutionPayloadBuilder;
+import org.audiveris.omr.score.resolution.PartResolutionPlan;
+import org.audiveris.omr.score.resolution.PartResolutionPlanner;
+import org.audiveris.omr.score.resolution.PartResolutionRequestDraft;
 import org.audiveris.omr.score.Score;
+import org.audiveris.omr.score.resolution.PartResolutionSettings;
 import org.audiveris.omr.score.ui.BookParameters;
 import org.audiveris.omr.score.ui.LogicalPartsEditor;
 import org.audiveris.omr.score.ui.SheetScaling;
@@ -88,6 +93,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import javax.swing.JDialog;
 import javax.swing.JFrame;
@@ -670,6 +676,27 @@ public class BookActions
         final Path bookPathSansExt = ExportPattern.getPathSansExt(bookPath);
 
         return new ExportBookTask(book, bookPathSansExt);
+    }
+
+    //--------------//
+    // resolveParts //
+    //--------------//
+    /**
+     * Resolve part assignments for current book with AI-assisted post-processing.
+     *
+     * @param e the event that triggered this action
+     * @return the task to launch in background
+     */
+    @Action(enabledProperty = BOOK_IDLE)
+    public Task<Void, Void> resolveParts (ActionEvent e)
+    {
+        final Book book = StubsController.getCurrentBook();
+
+        if ((book == null) || !hasValidSelectedSheets(book)) {
+            return null;
+        }
+
+        return new ResolvePartsTask(book);
     }
 
     //---------------//
@@ -2618,6 +2645,107 @@ public class BookActions
             book.resetTo(step);
             setBookTranscribable(true);
             setBookModifiedOrUpgraded(true);
+
+            return null;
+        }
+    }
+
+    //------------------//
+    // ResolvePartsTask //
+    //------------------//
+    private static class ResolvePartsTask
+            extends WaitingTask<Void, Void>
+    {
+        private final Book book;
+
+        ResolvePartsTask (Book book)
+        {
+            super(OmrGui.getApplication(), "Resolving parts in " + book.getRadix() + " ...");
+            this.book = book;
+        }
+
+        @Override
+        protected Void doInBackground ()
+            throws InterruptedException
+        {
+            try {
+                LogUtil.start(book);
+
+                if (!PartResolutionSettings.isEnabled()) {
+                    logger.info(
+                            "Part resolution is disabled. Enable it in Preferences > Part resolution.");
+
+                    return null;
+                }
+
+                final String apiKey = PartResolutionSettings.getConfiguredApiKey();
+
+                if (apiKey.isEmpty()) {
+                    logger.warn(
+                            "No API key available for part resolution. Set a session key or configure {}.",
+                            PartResolutionSettings.getApiKeyEnvVar());
+
+                    return null;
+                }
+
+                logger.info(
+                        "Part resolution scaffold is ready. Endpoint={}, model={}, chunk={} measures.",
+                        PartResolutionSettings.getApiEndpoint(),
+                        PartResolutionSettings.getModelName(),
+                        PartResolutionSettings.getChunkSize());
+
+                final List<PartResolutionPlan> plans = PartResolutionPlanner.planForBook(
+                    book,
+                    PartResolutionSettings.getChunkSize());
+                final int totalWindows = plans.stream().mapToInt(PartResolutionPlan::getWindowCount).sum();
+
+                if (totalWindows == 0) {
+                    logger.warn(
+                        "No measures available for resolution. Export/transcribe first, then retry.");
+
+                    return null;
+                }
+
+                logger.info(
+                    "Planned {} window(s) across {} score(s).",
+                    totalWindows,
+                    plans.size());
+
+                for (PartResolutionPlan plan : plans) {
+                    final String sampleIds = plan.getWindows().stream().limit(3).map(w -> w.getId()).collect(
+                        Collectors.joining(", "));
+                    logger.info(
+                        "Score #{}: {} measure(s), {} window(s), sample IDs: {}{}",
+                        plan.getScoreId(),
+                        plan.getTotalMeasures(),
+                        plan.getWindowCount(),
+                        sampleIds,
+                        (plan.getWindowCount() > 3) ? ", ..." : "");
+                }
+
+                    final List<PartResolutionRequestDraft> drafts = PartResolutionPayloadBuilder.buildDrafts(
+                        plans,
+                        PartResolutionSettings.getModelName());
+                    logger.info("Prepared {} request draft(s).", drafts.size());
+
+                    if (!drafts.isEmpty()) {
+                        final PartResolutionRequestDraft first = drafts.get(0);
+                        logger.info(
+                            "First draft => window={}, score=#{}, measures={}-{}, model={}, prompt='{}'",
+                            first.getWindowId(),
+                            first.getScoreId(),
+                            first.getStartMeasure(),
+                            first.getEndMeasure(),
+                            first.getModelName(),
+                            first.getInstruction());
+                    }
+
+                logger.info("Next stage pending: screenshot extraction + API payload generation.");
+            } catch (Throwable ex) {
+                logger.warn("Error in ResolvePartsTask {}", ex.toString(), ex);
+            } finally {
+                LogUtil.stopBook();
+            }
 
             return null;
         }

@@ -35,6 +35,7 @@
     <action domain="BOOK" section="30" class="org.audiveris.omr.sheet.ui.BookActions" method="printBookAs"/>
     <action domain="BOOK" section="40" class="org.audiveris.omr.sheet.ui.BookActions" method="exportBook"/>
     <action domain="BOOK" section="40" class="org.audiveris.omr.sheet.ui.BookActions" method="exportBookAs"/>
+    <action domain="BOOK" section="42" class="org.audiveris.omr.sheet.ui.BookActions" method="resolveParts"/>
     <action domain="BOOK" section="45" class="org.audiveris.omr.sheet.ui.BookActions" method="sampleBook"         topic="SAMPLES"/>
     <action domain="BOOK" section="45" class="org.audiveris.omr.sheet.ui.BookActions" method="browseBookSamples"  topic="SAMPLES"/>
     <action domain="BOOK" section="45" class="org.audiveris.omr.sheet.ui.BookActions" method="saveBookRepository" topic="SAMPLES"/>

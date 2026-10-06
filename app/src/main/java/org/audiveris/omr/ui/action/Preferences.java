@@ -24,6 +24,7 @@ package org.audiveris.omr.ui.action;
 import org.audiveris.omr.Main;
 import org.audiveris.omr.OMR;
 import org.audiveris.omr.constant.Constant;
+import org.audiveris.omr.score.resolution.PartResolutionSettings;
 import org.audiveris.omr.plugin.PluginsManager;
 import org.audiveris.omr.sheet.BookManager;
 import org.audiveris.omr.sheet.ui.StubsController;
@@ -57,6 +58,7 @@ import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JSlider;
 import javax.swing.JTextField;
 import javax.swing.border.TitledBorder;
@@ -117,6 +119,7 @@ public abstract class Preferences
                         + ",2dlu,fill:pref" // Early
                         + ",2dlu,fill:pref" // Plugin
                         + ",2dlu,fill:pref" // Outputs
+                    + ",2dlu,fill:pref" // Part resolution
                         + ",2dlu,fill:pref"); // Advanced
         final FormBuilder builder = FormBuilder.create().layout(layout).panel(panel);
 
@@ -125,6 +128,7 @@ public abstract class Preferences
         builder.addRaw(new EarlyPane()).xy(1, r += 2);
         builder.addRaw(new PluginPane()).xy(1, r += 2);
         builder.addRaw(new OutputsPane()).xy(1, r += 2);
+        builder.addRaw(new PartResolutionPane()).xy(1, r += 2);
         builder.addRaw(new AdvancedTopicsPane()).xy(1, r += 2);
 
         return panel;
@@ -425,6 +429,126 @@ public abstract class Preferences
             builder.addRaw(siblingPane).xy(1, r += 2);
             builder.addRaw(defaultPane).xy(1, r += 2);
             builder.addRaw(separatePane).xy(1, r += 2);
+        }
+    }
+
+    //--------------------//
+    // PartResolutionPane //
+    //--------------------//
+    /**
+     * Pane for AI-assisted part resolution settings.
+     */
+    private static class PartResolutionPane
+            extends Panel
+            implements ActionListener
+    {
+        private final JCheckBox enabledBox;
+
+        private final JTextField endpointField;
+
+        private final JTextField modelField;
+
+        private final JTextField timeoutField;
+
+        private final JTextField envVarField;
+
+        private final JButton keyButton;
+
+        public PartResolutionPane ()
+        {
+            final String className = getClass().getSimpleName();
+            setBorder(new TitledBorder(resources.getString(className + ".titledBorder.text")));
+
+            enabledBox = new JCheckBox(resources.getString(className + ".enabled.text"));
+            enabledBox.setToolTipText(resources.getString(className + ".enabled.toolTipText"));
+            enabledBox.setSelected(PartResolutionSettings.isEnabled());
+            enabledBox.addActionListener(this);
+
+            endpointField = new JTextField(PartResolutionSettings.getApiEndpoint());
+            modelField = new JTextField(PartResolutionSettings.getModelName());
+            timeoutField = new JTextField(Integer.toString(PartResolutionSettings.getTimeoutSeconds()));
+            envVarField = new JTextField(PartResolutionSettings.getApiKeyEnvVar());
+            keyButton = new JButton(resources.getString(className + ".sessionKeyButton.text"));
+            keyButton.setToolTipText(resources.getString(className + ".sessionKeyButton.toolTipText"));
+            keyButton.addActionListener(this);
+
+            endpointField.addActionListener(this);
+            modelField.addActionListener(this);
+            timeoutField.addActionListener(this);
+            envVarField.addActionListener(this);
+
+            final FormLayout layout = new FormLayout(
+                    "12dlu,1dlu,90dlu,10dlu,190dlu",
+                    "6dlu,pref,1dlu,pref,1dlu,pref,1dlu,pref,1dlu,pref");
+            final FormBuilder builder = FormBuilder.create().layout(layout).panel(this);
+
+            int r = 0;
+            builder.addRaw(enabledBox).xyw(1, r += 2, 3);
+            builder.addRaw(new JLabel(resources.getString(className + ".enabled.desc"))).xy(5, r);
+
+            builder.addRaw(new JLabel(resources.getString(className + ".endpointLabel.text"))).xy(3, r += 2);
+            builder.addRaw(endpointField).xy(5, r);
+
+            builder.addRaw(new JLabel(resources.getString(className + ".modelLabel.text"))).xy(3, r += 2);
+            builder.addRaw(modelField).xy(5, r);
+
+            builder.addRaw(new JLabel(resources.getString(className + ".timeoutLabel.text"))).xy(3, r += 2);
+            builder.addRaw(timeoutField).xy(5, r);
+
+            builder.addRaw(keyButton).xyw(1, r += 2, 3);
+            builder.addRaw(envVarField).xy(5, r);
+
+            refreshFields();
+        }
+
+        @Override
+        public void actionPerformed (ActionEvent e)
+        {
+            final Object source = e.getSource();
+
+            if (source == enabledBox) {
+                PartResolutionSettings.setEnabled(enabledBox.isSelected());
+                refreshFields();
+
+                return;
+            }
+
+            if (source == keyButton) {
+                final String entered = JOptionPane.showInputDialog(
+                        this,
+                        resources.getString("PartResolutionPane.sessionKey.prompt"),
+                        resources.getString("PartResolutionPane.sessionKey.title"),
+                        JOptionPane.PLAIN_MESSAGE);
+
+                if (entered != null) {
+                    PartResolutionSettings.setSessionApiKey(entered);
+                }
+
+                return;
+            }
+
+            PartResolutionSettings.setApiEndpoint(endpointField.getText());
+            PartResolutionSettings.setModelName(modelField.getText());
+            try {
+                PartResolutionSettings.setTimeoutSeconds(Integer.parseInt(timeoutField.getText().trim()));
+            } catch (NumberFormatException ex) {
+                timeoutField.setText(Integer.toString(PartResolutionSettings.getTimeoutSeconds()));
+            }
+            PartResolutionSettings.setApiKeyEnvVar(envVarField.getText());
+        }
+
+        private void refreshFields ()
+        {
+            final boolean enabled = enabledBox.isSelected();
+            endpointField.setEnabled(enabled);
+            modelField.setEnabled(enabled);
+            timeoutField.setEnabled(enabled);
+            envVarField.setEnabled(enabled);
+            keyButton.setEnabled(enabled);
+            endpointField.setText(PartResolutionSettings.getApiEndpoint());
+            modelField.setText(PartResolutionSettings.getModelName());
+            timeoutField.setText(Integer.toString(PartResolutionSettings.getTimeoutSeconds()));
+            envVarField.setText(PartResolutionSettings.getApiKeyEnvVar());
         }
     }
 
