@@ -323,6 +323,9 @@ public class PartwiseBuilder
     /** Factory for ProxyMusic entities. */
     private final ObjectFactory factory = new ObjectFactory();
 
+    /** Optional observer of exported notes, null for a standard export. */
+    private final NoteObserver noteObserver;
+
     //~ Constructors -------------------------------------------------------------------------------
 
     /**
@@ -332,13 +335,15 @@ public class PartwiseBuilder
      * @throws InterruptedException if the thread has been interrupted
      * @throws ExecutionException   if a checked exception was thrown
      */
-    private PartwiseBuilder (Score score)
+    private PartwiseBuilder (Score score,
+                             NoteObserver noteObserver)
             throws InterruptedException, ExecutionException
     {
         // Make sure the JAXB context is ready
         loading.get();
 
         this.score = score;
+        this.noteObserver = noteObserver;
     }
 
     //~ Methods ------------------------------------------------------------------------------------
@@ -2620,6 +2625,20 @@ public class PartwiseBuilder
                 }
             }
 
+            // Observer, which also gets the note tagged with its stable identity
+            if ((noteObserver != null) && !current.measure.isDummy() && !current.repeatCopying
+                    && (note.getId() != 0)) {
+                final String id = "s" + current.page.getSheet().getStub().getNumber() + "n"
+                        + note.getId();
+                current.pmNote.setId(id);
+                noteObserver.noteExported(
+                        id,
+                        note,
+                        current.measure,
+                        current.logicalPart.getPid(),
+                        current.pmNote);
+            }
+
             // Everything is OK
             current.pmMeasure.getNoteOrBackupOrForward().add(current.pmNote);
         } catch (Exception ex) {
@@ -3536,9 +3555,30 @@ public class PartwiseBuilder
     public static ScorePartwise build (Score score)
         throws InterruptedException, ExecutionException
     {
+        return build(score, null);
+    }
+
+    //-------//
+    // build //
+    //-------//
+    /**
+     * Visit the whole score tree and build the corresponding ScorePartwise, giving every
+     * exported note an <code>id</code> attribute (sheet number and note inter id) and reporting
+     * it to the provided observer.
+     *
+     * @param score    the score to export (cannot be null)
+     * @param observer observer of exported notes, null for a standard export without note ids
+     * @return the populated ScorePartwise
+     * @throws InterruptedException if the thread has been interrupted
+     * @throws ExecutionException   if a checked exception was thrown
+     */
+    public static ScorePartwise build (Score score,
+                                       NoteObserver observer)
+        throws InterruptedException, ExecutionException
+    {
         Objects.requireNonNull(score, "Trying to export a null score");
 
-        final PartwiseBuilder builder = new PartwiseBuilder(score);
+        final PartwiseBuilder builder = new PartwiseBuilder(score, observer);
 
         builder.processScore();
 
@@ -3556,6 +3596,30 @@ public class PartwiseBuilder
     }
 
     //~ Inner Classes ------------------------------------------------------------------------------
+
+    //--------------//
+    // NoteObserver //
+    //--------------//
+    /**
+     * Observer of the notes being exported.
+     */
+    public interface NoteObserver
+    {
+        /**
+         * Called for every exported note (not for dummy or copied measures).
+         *
+         * @param id      the identity the exported note is tagged with
+         * @param note    the OMR note (head or rest)
+         * @param measure the containing measure
+         * @param partId  the exported part id
+         * @param pmNote  the exported note, complete except for its own insertion in the measure
+         */
+        void noteExported (String id,
+                           AbstractNoteInter note,
+                           Measure measure,
+                           String partId,
+                           Note pmNote);
+    }
 
     //---------------//
     // ClefIterators //

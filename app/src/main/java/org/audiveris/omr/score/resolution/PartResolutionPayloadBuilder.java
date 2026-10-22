@@ -72,7 +72,9 @@ public abstract class PartResolutionPayloadBuilder
     private static String instructionFor (PartResolutionWindow window)
     {
         return "Resolve SATB part assignment for score window " + window.getId()
-                + " (measures " + window.getStartMeasure() + "-" + window.getEndMeasure()
-                + "). Use the staff image and matching MusicXML slice to produce per-note part mapping with confidence.";
+                + " (measure-stacks " + window.getStartMeasure() + "-" + window.getEndMeasure()
+                + "). This window may include an implicit pickup or cross-system continuation."
+                + " Use the staff image segment(s) and matching MusicXML slice to produce per-note part mapping with confidence."
+                + " Trust MusicXML measure numbering/flags over visual assumptions about full bars.";
     }
 }

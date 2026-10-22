@@ -25,6 +25,7 @@ import org.audiveris.omr.Main;
 import org.audiveris.omr.OMR;
 import org.audiveris.omr.constant.Constant;
 import org.audiveris.omr.score.resolution.PartResolutionSettings;
+import org.audiveris.omr.score.resolution.PartResolutionApiGateway;
 import org.audiveris.omr.plugin.PluginsManager;
 import org.audiveris.omr.sheet.BookManager;
 import org.audiveris.omr.sheet.ui.StubsController;
@@ -45,9 +46,13 @@ import com.jgoodies.forms.layout.FormLayout;
 
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.File;
+import java.awt.Dimension;
+import java.awt.Toolkit;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
@@ -59,8 +64,10 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
 import javax.swing.JSlider;
 import javax.swing.JTextField;
+import javax.swing.SwingWorker;
 import javax.swing.border.TitledBorder;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
@@ -142,7 +149,16 @@ public abstract class Preferences
      */
     public static void show ()
     {
-        OMR.gui.displayMessage(getMessage(), resources.getString("Preferences.title"));
+        final Panel message = getMessage();
+        final JScrollPane scrollPane = new JScrollPane(message);
+        scrollPane.setBorder(null);
+
+        final Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
+        final int width = Math.max(600, Math.min(980, screen.width - 160));
+        final int height = Math.max(500, Math.min(760, screen.height - 180));
+        scrollPane.setPreferredSize(new Dimension(width, height));
+
+        OMR.gui.displayMessage(scrollPane, resources.getString("Preferences.title"));
     }
 
     //~ Inner Classes ------------------------------------------------------------------------------
@@ -450,9 +466,15 @@ public abstract class Preferences
 
         private final JTextField timeoutField;
 
+        private final JTextField requestsField;
+
+        private final JTextField reasoningField;
+
         private final JTextField envVarField;
 
         private final JButton keyButton;
+
+        private final JButton helloButton;
 
         public PartResolutionPane ()
         {
@@ -467,19 +489,43 @@ public abstract class Preferences
             endpointField = new JTextField(PartResolutionSettings.getApiEndpoint());
             modelField = new JTextField(PartResolutionSettings.getModelName());
             timeoutField = new JTextField(Integer.toString(PartResolutionSettings.getTimeoutSeconds()));
+            requestsField = new JTextField(Integer.toString(PartResolutionSettings.getApiRequestsPerRun()));
+            requestsField.setToolTipText(resources.getString(className + ".requestsLabel.toolTipText"));
+            reasoningField = new JTextField(PartResolutionSettings.getReasoningEffort());
+            reasoningField.setToolTipText(resources.getString(className + ".reasoningLabel.toolTipText"));
             envVarField = new JTextField(PartResolutionSettings.getApiKeyEnvVar());
             keyButton = new JButton(resources.getString(className + ".sessionKeyButton.text"));
             keyButton.setToolTipText(resources.getString(className + ".sessionKeyButton.toolTipText"));
             keyButton.addActionListener(this);
+            helloButton = new JButton(resources.getString(className + ".helloButton.text"));
+            helloButton.setToolTipText(resources.getString(className + ".helloButton.toolTipText"));
+            helloButton.addActionListener(this);
 
             endpointField.addActionListener(this);
             modelField.addActionListener(this);
             timeoutField.addActionListener(this);
+            requestsField.addActionListener(this);
+            reasoningField.addActionListener(this);
             envVarField.addActionListener(this);
+
+            // Values typed without pressing Enter must not be lost
+            final FocusAdapter commitOnFocusLost = new FocusAdapter()
+            {
+                @Override
+                public void focusLost (FocusEvent fe)
+                {
+                    persistSettingsFromFields();
+                }
+            };
+
+            for (JTextField field : new JTextField[]
+            { endpointField, modelField, timeoutField, requestsField, reasoningField, envVarField }) {
+                field.addFocusListener(commitOnFocusLost);
+            }
 
             final FormLayout layout = new FormLayout(
                     "12dlu,1dlu,90dlu,10dlu,190dlu",
-                    "6dlu,pref,1dlu,pref,1dlu,pref,1dlu,pref,1dlu,pref");
+                    "6dlu,pref,1dlu,pref,1dlu,pref,1dlu,pref,1dlu,pref,1dlu,pref,1dlu,pref,1dlu,pref");
             final FormBuilder builder = FormBuilder.create().layout(layout).panel(this);
 
             int r = 0;
@@ -495,8 +541,17 @@ public abstract class Preferences
             builder.addRaw(new JLabel(resources.getString(className + ".timeoutLabel.text"))).xy(3, r += 2);
             builder.addRaw(timeoutField).xy(5, r);
 
+            builder.addRaw(new JLabel(resources.getString(className + ".requestsLabel.text"))).xy(3, r += 2);
+            builder.addRaw(requestsField).xy(5, r);
+
+            builder.addRaw(new JLabel(resources.getString(className + ".reasoningLabel.text"))).xy(3, r += 2);
+            builder.addRaw(reasoningField).xy(5, r);
+
             builder.addRaw(keyButton).xyw(1, r += 2, 3);
             builder.addRaw(envVarField).xy(5, r);
+
+            builder.addRaw(helloButton).xyw(1, r += 2, 3);
+            builder.addRaw(new JLabel(resources.getString(className + ".helloButton.desc"))).xy(5, r);
 
             refreshFields();
         }
@@ -527,6 +582,18 @@ public abstract class Preferences
                 return;
             }
 
+            if (source == helloButton) {
+                persistSettingsFromFields();
+                runHelloTest();
+
+                return;
+            }
+
+            persistSettingsFromFields();
+        }
+
+        private void persistSettingsFromFields ()
+        {
             PartResolutionSettings.setApiEndpoint(endpointField.getText());
             PartResolutionSettings.setModelName(modelField.getText());
             try {
@@ -534,7 +601,83 @@ public abstract class Preferences
             } catch (NumberFormatException ex) {
                 timeoutField.setText(Integer.toString(PartResolutionSettings.getTimeoutSeconds()));
             }
+
+            try {
+                PartResolutionSettings.setApiRequestsPerRun(Integer.parseInt(requestsField.getText().trim()));
+            } catch (NumberFormatException ex) {
+                requestsField.setText(Integer.toString(PartResolutionSettings.getApiRequestsPerRun()));
+            }
+
+            PartResolutionSettings.setReasoningEffort(reasoningField.getText());
             PartResolutionSettings.setApiKeyEnvVar(envVarField.getText());
+        }
+
+        private void runHelloTest ()
+        {
+            final String endpoint = PartResolutionSettings.getApiEndpoint();
+            final String model = PartResolutionSettings.getModelName();
+            final int timeoutSeconds = PartResolutionSettings.getTimeoutSeconds();
+            final String apiKey = PartResolutionSettings.getConfiguredApiKey();
+
+            if (apiKey.isBlank()) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        resources.getString("PartResolutionPane.helloResult.missingKey"),
+                        resources.getString("PartResolutionPane.helloResult.title"),
+                        JOptionPane.WARNING_MESSAGE);
+
+                return;
+            }
+
+            helloButton.setEnabled(false);
+
+            final SwingWorker<PartResolutionApiGateway.PingResult, Void> worker =
+                    new SwingWorker<>()
+                    {
+                        @Override
+                        protected PartResolutionApiGateway.PingResult doInBackground ()
+                            throws Exception
+                        {
+                            return PartResolutionApiGateway.pingHello(
+                                    endpoint,
+                                    model,
+                                    apiKey,
+                                    timeoutSeconds);
+                        }
+
+                        @Override
+                        protected void done ()
+                        {
+                            try {
+                                final PartResolutionApiGateway.PingResult result = get();
+                                final String text = ((result.responseText != null)
+                                        && !result.responseText.isBlank())
+                                                ? result.responseText : resources.getString(
+                                                        "PartResolutionPane.helloResult.noText");
+                                final int messageType = ((result.httpStatus >= 200)
+                                        && (result.httpStatus < 300))
+                                                ? JOptionPane.INFORMATION_MESSAGE
+                                                : JOptionPane.WARNING_MESSAGE;
+                                final String body = "HTTP " + result.httpStatus + "\n\n" + text;
+                                JOptionPane.showMessageDialog(
+                                        PartResolutionPane.this,
+                                        body,
+                                        resources.getString("PartResolutionPane.helloResult.title"),
+                                        messageType);
+                            } catch (Exception ex) {
+                                JOptionPane.showMessageDialog(
+                                        PartResolutionPane.this,
+                                        resources.getString("PartResolutionPane.helloResult.error") + "\n"
+                                                + ex.getMessage(),
+                                        resources.getString("PartResolutionPane.helloResult.title"),
+                                        JOptionPane.ERROR_MESSAGE);
+                            } finally {
+                                refreshFields();
+                            }
+                        }
+                    };
+
+            worker.execute();
         }
 
         private void refreshFields ()
@@ -543,11 +686,16 @@ public abstract class Preferences
             endpointField.setEnabled(enabled);
             modelField.setEnabled(enabled);
             timeoutField.setEnabled(enabled);
+            requestsField.setEnabled(enabled);
+            reasoningField.setEnabled(enabled);
             envVarField.setEnabled(enabled);
             keyButton.setEnabled(enabled);
+            helloButton.setEnabled(enabled);
             endpointField.setText(PartResolutionSettings.getApiEndpoint());
             modelField.setText(PartResolutionSettings.getModelName());
             timeoutField.setText(Integer.toString(PartResolutionSettings.getTimeoutSeconds()));
+            requestsField.setText(Integer.toString(PartResolutionSettings.getApiRequestsPerRun()));
+            reasoningField.setText(PartResolutionSettings.getReasoningEffort());
             envVarField.setText(PartResolutionSettings.getApiKeyEnvVar());
         }
     }

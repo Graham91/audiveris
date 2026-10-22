@@ -22,7 +22,10 @@
 package org.audiveris.omr.score.resolution;
 
 import org.audiveris.omr.constant.Constant;
+import org.audiveris.omr.WellKnowns;
 import org.audiveris.omr.constant.ConstantSet;
+
+import java.nio.file.Path;
 
 /**
  * Class <code>PartResolutionSettings</code> gathers user settings for AI-assisted part resolution.
@@ -46,6 +49,21 @@ public abstract class PartResolutionSettings
     }
 
     //~ Static Methods -----------------------------------------------------------------------------
+
+    /**
+     * Report the persistent folder where part-resolution fixtures are kept.
+     * <p>
+     * Unlike the debug artifacts, it is not under the temp folder, so it is never cleaned up.
+     *
+     * @return the fixtures root folder
+     */
+    public static Path getFixtureFolder ()
+    {
+        final String value = constants.fixtureFolder.getValue().trim();
+
+        return value.isEmpty() ? WellKnowns.CONFIG_FOLDER.resolve("part-resolution-fixtures")
+                : Path.of(value);
+    }
 
     //-----------------------------//
     // getApiEndpoint             //
@@ -113,6 +131,45 @@ public abstract class PartResolutionSettings
     }
 
     //-----------------------------//
+    // getApiRequestsPerRun       //
+    //-----------------------------//
+    public static int getApiRequestsPerRun ()
+    {
+        return Math.max(1, constants.apiRequestsPerRun.getValue());
+    }
+
+    //-----------------------------//
+    // getReasoningEffort         //
+    //-----------------------------//
+    /**
+     * Report the reasoning effort to send with each request.
+     *
+     * @return none, low, medium, high, or an empty string when the field must be left out
+     */
+    public static String getReasoningEffort ()
+    {
+        final String value = constants.reasoningEffort.getValue().trim();
+
+        return "omit".equalsIgnoreCase(value) ? "" : value;
+    }
+
+    //-----------------------------//
+    // getTargetPartCount         //
+    //-----------------------------//
+    public static int getTargetPartCount ()
+    {
+        return constants.targetPartCount.getValue();
+    }
+
+    //-----------------------------//
+    // setReasoningEffort         //
+    //-----------------------------//
+    public static void setReasoningEffort (String effort)
+    {
+        constants.reasoningEffort.setStringValue(effort.trim());
+    }
+
+    //-----------------------------//
     // isEnabled                  //
     //-----------------------------//
     public static boolean isEnabled ()
@@ -168,6 +225,22 @@ public abstract class PartResolutionSettings
         constants.timeoutSeconds.setValue(Math.max(1, timeoutSeconds));
     }
 
+    //-----------------------------//
+    // setApiRequestsPerRun       //
+    //-----------------------------//
+    public static void setApiRequestsPerRun (int count)
+    {
+        constants.apiRequestsPerRun.setValue(Math.max(1, count));
+    }
+
+    //-----------------------------//
+    // setTargetPartCount         //
+    //-----------------------------//
+    public static void setTargetPartCount (int count)
+    {
+        constants.targetPartCount.setValue(Math.max(1, count));
+    }
+
     //~ Inner Classes ------------------------------------------------------------------------------
 
     //-----------//
@@ -201,5 +274,23 @@ public abstract class PartResolutionSettings
                 "measures",
                 3,
                 "Sliding window size in measures");
+
+        private final Constant.Integer apiRequestsPerRun = new Constant.Integer(
+            "requests",
+            1,
+            "Maximum API requests to submit in one Resolve Parts run");
+
+        private final Constant.String reasoningEffort = new Constant.String(
+            "medium",
+            "Reasoning effort sent to the model: none, low, medium or high. Use 'omit' for models without reasoning support");
+
+        private final Constant.String fixtureFolder = new Constant.String(
+            "",
+            "Persistent folder for part-resolution fixtures (empty: <config folder>/part-resolution-fixtures)");
+
+        private final Constant.Integer targetPartCount = new Constant.Integer(
+            "parts",
+            4,
+            "Target number of logical parts expected in AI assignments");
     }
 }

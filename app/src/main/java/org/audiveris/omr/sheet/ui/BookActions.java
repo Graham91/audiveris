@@ -30,11 +30,17 @@ import org.audiveris.omr.constant.ConstantSet;
 import org.audiveris.omr.log.LogUtil;
 import org.audiveris.omr.plugin.Plugin;
 import org.audiveris.omr.plugin.PluginsManager;
+import org.audiveris.omr.score.resolution.PartResolutionArtifactExporter;
+import org.audiveris.omr.score.resolution.PartResolutionApiGateway;
+import org.audiveris.omr.score.resolution.PartResolutionFixture;
 import org.audiveris.omr.score.resolution.PartResolutionPayloadBuilder;
 import org.audiveris.omr.score.resolution.PartResolutionPlan;
 import org.audiveris.omr.score.resolution.PartResolutionPlanner;
 import org.audiveris.omr.score.resolution.PartResolutionRequestDraft;
+import org.audiveris.omr.score.resolution.PartResolutionRewriteApplier;
+import org.audiveris.omr.score.resolution.PartResolutionRewritePlanner;
 import org.audiveris.omr.score.Score;
+import org.audiveris.omr.score.resolution.PartResolutionMockResponseFramework;
 import org.audiveris.omr.score.resolution.PartResolutionSettings;
 import org.audiveris.omr.score.ui.BookParameters;
 import org.audiveris.omr.score.ui.LogicalPartsEditor;
@@ -85,6 +91,7 @@ import java.awt.event.ActionListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeEvent;
+import java.awt.Desktop;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -2678,14 +2685,8 @@ public class BookActions
                     return null;
                 }
 
-                final String apiKey = PartResolutionSettings.getConfiguredApiKey();
-
-                if (apiKey.isEmpty()) {
-                    logger.warn(
-                            "No API key available for part resolution. Set a session key or configure {}.",
-                            PartResolutionSettings.getApiKeyEnvVar());
-
-                    return null;
+                for (SheetStub stub : book.getValidSelectedStubs()) {
+                    stub.reachStep(OmrStep.PAGE, false);
                 }
 
                 logger.info(
@@ -2728,6 +2729,152 @@ public class BookActions
                         PartResolutionSettings.getModelName());
                     logger.info("Prepared {} request draft(s).", drafts.size());
 
+                    final Path artifactsRoot = PartResolutionArtifactExporter.exportDebugArtifacts(
+                        book,
+                        plans,
+                        drafts);
+                    logger.info("Part-resolution debug artifacts written to {}", artifactsRoot);
+
+                    final int templates = PartResolutionMockResponseFramework.bootstrapTemplates(
+                        artifactsRoot,
+                        PartResolutionSettings.getTargetPartCount());
+                    logger.info("Prepared {} mock response template(s).", templates);
+
+                    final String apiKey = PartResolutionSettings.getConfiguredApiKey();
+                    logger.info(
+                        "API key configured: {} (env var name: {}).",
+                        apiKey.isEmpty() ? "no" : "yes",
+                        PartResolutionSettings.getApiKeyEnvVar());
+
+                    if (!apiKey.isEmpty()) {
+                        final PartResolutionApiGateway.ApiSubmitReport apiReport = PartResolutionApiGateway.submitRequests(
+                            artifactsRoot,
+                            PartResolutionSettings.getApiEndpoint(),
+                            PartResolutionSettings.getModelName(),
+                            apiKey,
+                            PartResolutionSettings.getTimeoutSeconds(),
+                            PartResolutionSettings.getApiRequestsPerRun());
+
+                        logger.info(
+                            "API submit report: submitted={}, accepted={}, attempted={}, httpFailed={}, parseFailed={}, skippedExisting={}, skippedInvalidBundle={}.",
+                            apiReport.submitted,
+                            apiReport.windowsAccepted,
+                            apiReport.windowsAttempted,
+                            apiReport.windowsHttpFailed,
+                            apiReport.windowsParseFailed,
+                            apiReport.windowsSkippedExistingResponse,
+                            apiReport.windowsSkippedInvalidBundle);
+                        logger.info(
+                            "API submit details written to {}/api-submit-report.(txt|json)",
+                            artifactsRoot);
+                    } else {
+                        logger.info(
+                            "No API key configured ({}). API submission skipped.",
+                            PartResolutionSettings.getApiKeyEnvVar());
+                    }
+
+                    final PartResolutionMockResponseFramework.IngestReport ingestReport =
+                        PartResolutionMockResponseFramework.ingestResponses(
+                            artifactsRoot,
+                            PartResolutionSettings.getTargetPartCount());
+
+                    if (ingestReport.windowsWithResponses > 0) {
+                        logger.info(
+                            "Applied model responses: windows accepted/rejected={}/{}, assignments={}, notes touched={}, notes resolved={}, source-part changes={}, second-pass queue={}",
+                            ingestReport.windowsAccepted,
+                            ingestReport.windowsRejected,
+                            ingestReport.assignmentsApplied,
+                            ingestReport.notesTouched,
+                            ingestReport.notesResolved,
+                            ingestReport.partChangesFromSource,
+                            ingestReport.secondPassQueueSize);
+                        logger.info(
+                            "Applied assignment evidence written to {}/applied-assignments.json and {}/response-ingest-report.(txt|json)",
+                            artifactsRoot,
+                            artifactsRoot);
+
+                        try {
+                            final Path fixture = PartResolutionFixture.save(book, artifactsRoot);
+                            logger.info(
+                                "Fixture saved to {} (replay without API: gradlew :app:partFixture --args=\"rebuild {}\")",
+                                fixture,
+                                fixture.getFileName());
+                        } catch (Exception ex) {
+                            logger.warn("Could not save part-resolution fixture: {}", ex.toString());
+                        }
+
+                        final PartResolutionRewritePlanner.RewriteReport rewriteReport =
+                            PartResolutionRewritePlanner.buildRewriteArtifacts(
+                                artifactsRoot,
+                                ingestReport.windowsWithResponses);
+                        logger.info(
+                            "Rewrite plan: actionable={}, no-op={}, ambiguous={}, unresolved={}, discrepancyGate={} ({})",
+                            rewriteReport.actionableChanges,
+                            rewriteReport.noOpAssignments,
+                            rewriteReport.ambiguousNotes,
+                            rewriteReport.unresolvedNotes,
+                            rewriteReport.discrepancyGateTriggered,
+                            rewriteReport.discrepancyGateMode);
+                        logger.info(
+                            "Rewrite artifacts written to {}/rewrite-plan.(txt|json)",
+                            artifactsRoot);
+
+                        final PartResolutionRewriteApplier.RewriteApplyReport applyReport =
+                            PartResolutionRewriteApplier.apply(book, artifactsRoot, rewriteReport);
+                        logger.info(
+                            "Rewrite apply: plannedChanges={}, notesMoved={}, gateTriggered={}",
+                            applyReport.plannedActionableChanges,
+                            applyReport.totalApplied,
+                            applyReport.discrepancyGateTriggered);
+                        logger.info(
+                            "Corrected outputs report written to {}/rewrite-apply-report.(txt|json)",
+                            artifactsRoot);
+                        logger.info(
+                            "Note: standard Export still writes the original score. Use corrected artifacts under {}/corrected for AI-adjusted output.",
+                            artifactsRoot);
+
+                        for (PartResolutionRewriteApplier.ScoreApplyReport scoreApply : applyReport.scores) {
+                            logger.info(
+                                "Score #{} rebuilt: xml={}, mxl={}, notes={}, aiAssigned={}, defaulted={}, moved={}, notesPerPart={}",
+                                scoreApply.scoreId,
+                                scoreApply.correctedXml,
+                                scoreApply.correctedMxl,
+                                scoreApply.totalNotes,
+                                scoreApply.aiAssignedNotes,
+                                scoreApply.defaultedNotes,
+                                scoreApply.applied,
+                                scoreApply.notesPerPart);
+
+                            for (String warning : scoreApply.warnings) {
+                                logger.warn("Score #{} rebuild warning: {}", scoreApply.scoreId, warning);
+                            }
+                        }
+
+                        if (!applyReport.errors.isEmpty()) {
+                            for (String err : applyReport.errors) {
+                                logger.warn("Rewrite apply issue: {}", err);
+                            }
+                        }
+
+                        showCorrectedArtifactsDialog(artifactsRoot, applyReport);
+
+                        if (!rewriteReport.errors.isEmpty()) {
+                            for (String err : rewriteReport.errors) {
+                                logger.warn("Rewrite planning issue: {}", err);
+                            }
+                        }
+
+                        if (!ingestReport.errors.isEmpty()) {
+                            for (String err : ingestReport.errors) {
+                                logger.warn("Response ingest issue: {}", err);
+                            }
+                        }
+                    } else {
+                        logger.info(
+                            "No response.json files found yet under {}. Drop model responses there and run Resolve Parts again to apply.",
+                            artifactsRoot.resolve("windows"));
+                    }
+
                     if (!drafts.isEmpty()) {
                         final PartResolutionRequestDraft first = drafts.get(0);
                         logger.info(
@@ -2740,7 +2887,7 @@ public class BookActions
                             first.getInstruction());
                     }
 
-                logger.info("Next stage pending: screenshot extraction + API payload generation.");
+                logger.info("Resolve Parts run completed.");
             } catch (Throwable ex) {
                 logger.warn("Error in ResolvePartsTask {}", ex.toString(), ex);
             } finally {
@@ -2748,6 +2895,75 @@ public class BookActions
             }
 
             return null;
+        }
+
+        private void showCorrectedArtifactsDialog (Path artifactsRoot,
+                                                   PartResolutionRewriteApplier.RewriteApplyReport applyReport)
+        {
+            if ((applyReport == null) || applyReport.scores.isEmpty() || (OMR.gui == null)
+                    || (applyReport.scores.get(0).correctedXml == null)) {
+                return;
+            }
+
+            final StringBuilder sb = new StringBuilder();
+            sb.append("Rebuilt part-resolution output is ready.").append(System.lineSeparator())
+                    .append(System.lineSeparator());
+
+            {
+                final PartResolutionRewriteApplier.ScoreApplyReport first = applyReport.scores.get(0);
+
+                sb.append("AI-assigned notes: ").append(first.aiAssignedNotes).append("/")
+                        .append(first.totalNotes).append(System.lineSeparator())
+                        .append("Notes per part: ").append(first.notesPerPart)
+                        .append(System.lineSeparator());
+
+                if (first.correctedXml != null) {
+                    sb.append("XML: ").append(first.correctedXml).append(System.lineSeparator());
+                }
+
+                if (first.correctedMxl != null) {
+                    sb.append("MXL: ").append(first.correctedMxl).append(System.lineSeparator());
+                }
+
+                for (String warning : first.warnings) {
+                    sb.append("Warning: ").append(warning).append(System.lineSeparator());
+                }
+            }
+
+            final Path correctedFolder = artifactsRoot.resolve("corrected");
+            sb.append(System.lineSeparator())
+                    .append("Folder: ").append(correctedFolder);
+
+            SwingUtilities.invokeLater(() -> {
+                final Object[] options = new Object[]
+                { "Open Corrected Folder", "OK" };
+                final int answer = JOptionPane.showOptionDialog(
+                        OMR.gui.getFrame(),
+                        sb.toString(),
+                        "Part Resolution Review",
+                        JOptionPane.DEFAULT_OPTION,
+                        JOptionPane.INFORMATION_MESSAGE,
+                        null,
+                        options,
+                        options[1]);
+
+                if (answer == 0) {
+                    openInDesktop(correctedFolder);
+                }
+            });
+        }
+
+        private void openInDesktop (Path path)
+        {
+            try {
+                if (Desktop.isDesktopSupported()) {
+                    Desktop.getDesktop().open(path.toFile());
+                } else {
+                    logger.warn("Desktop open not supported for {}", path);
+                }
+            } catch (Exception ex) {
+                logger.warn("Could not open {} in desktop", path, ex);
+            }
         }
     }
 

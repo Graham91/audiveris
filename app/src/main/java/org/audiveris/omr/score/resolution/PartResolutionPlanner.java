@@ -80,11 +80,26 @@ public abstract class PartResolutionPlanner
             if (safeMeasureCount <= safeChunk) {
                 windows.add(new PartResolutionWindow(scoreId, 1, 1, safeMeasureCount));
             } else {
+                // Consecutive windows share only their boundary measure (stride = chunk - 1)
+                final int stride = Math.max(1, safeChunk - 1);
+                final int lastStart = safeMeasureCount - safeChunk + 1;
                 int index = 1;
+                int covered = 0;
 
-                for (int start = 1; start <= (safeMeasureCount - safeChunk + 1); start++) {
+                for (int start = 1; start <= lastStart; start += stride) {
                     final int end = start + safeChunk - 1;
                     windows.add(new PartResolutionWindow(scoreId, index++, start, end));
+                    covered = end;
+                }
+
+                // Tail window so that the last measures are never left out
+                if (covered < safeMeasureCount) {
+                    windows.add(
+                            new PartResolutionWindow(
+                                    scoreId,
+                                    index,
+                                    lastStart,
+                                    safeMeasureCount));
                 }
             }
         }

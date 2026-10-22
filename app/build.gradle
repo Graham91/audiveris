@@ -71,6 +71,7 @@ dependencies {
         "ch.qos.logback:logback-classic:1.4.14",
         "com.github.jai-imageio:jai-imageio-core:1.4.0",
         "com.github.jai-imageio:jai-imageio-jpeg2000:1.4.0",
+        "com.google.code.gson:gson:2.11.0",
         "com.itextpdf:itextpdf:5.5.13.2",
         "com.jgoodies:jgoodies-forms:1.9.0",
         "com.jgoodies:jgoodies-looks:2.7.0",
@@ -187,6 +188,18 @@ tasks.run {
         logger.warn("run. cmdLineArgs: {}", cmdLineArgs)
         args cmdLineArgs.split(',')
     }
+}
+
+// Replay part-resolution fixtures (no API call), e.g.
+//   gradlew :app:partFixture --args="list"
+//   gradlew :app:partFixture --args="rebuild [fixtureNameOrPath] [outDir]"
+//   gradlew :app:partFixture --args="import <debugRunDir> <original.mxl>"
+tasks.register('partFixture', JavaExec) {
+    group = 'audiveris'
+    description = 'Rebuild or import part-resolution fixtures without calling the AI API'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.audiveris.omr.score.resolution.PartResolutionFixtureTool'
+    jvmArgs = ["--enable-native-access=ALL-UNNAMED"]
 }
 
 // Generate application.jar

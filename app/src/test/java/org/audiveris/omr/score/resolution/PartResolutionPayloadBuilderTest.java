@@ -24,7 +24,7 @@ public class PartResolutionPayloadBuilderTest
                 List.of(plan),
                 "gpt-5.1");
 
-        assertEquals(3, drafts.size());
+        assertEquals(2, drafts.size());
     }
 
     @Test
