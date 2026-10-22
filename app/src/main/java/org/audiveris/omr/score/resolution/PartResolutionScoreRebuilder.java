@@ -49,6 +49,11 @@ public abstract class PartResolutionScoreRebuilder
     /** Maximum number of bar mismatches listed individually in the warnings. */
     private static final int MAX_BAR_WARNINGS = 20;
 
+    /** Names given to four target parts, top line first. */
+    private static final String[] SATB_NAMES = { "Soprano", "Alto", "Tenor", "Bass" };
+
+    private static final String[] SATB_ABBREVIATIONS = { "S.", "A.", "T.", "B." };
+
     private PartResolutionScoreRebuilder ()
     {
     }
@@ -189,8 +194,6 @@ public abstract class PartResolutionScoreRebuilder
         }
 
         final int[] home = new int[n];
-        final int[] owner = new int[sources.size()];
-        java.util.Arrays.fill(owner, -1);
 
         for (int t = 0; t < n; t++) {
             int best = -1;
@@ -204,10 +207,6 @@ public abstract class PartResolutionScoreRebuilder
             }
 
             home[t] = (best >= 0) ? best : Math.min(t, sources.size() - 1);
-
-            if (owner[home[t]] < 0) {
-                owner[home[t]] = t; // First target homed on a source part keeps its directions
-            }
 
             if (bestCount == 0) {
                 result.warnings.add("Target part " + outputId(t) + " received no notes.");
@@ -264,7 +263,7 @@ public abstract class PartResolutionScoreRebuilder
 
             for (int k = 0; k < measureCount; k++) {
                 part.appendChild(
-                        buildMeasure(out, t, k, sources, home, owner, measureDuration[k], sums[t]));
+                        buildMeasure(out, t, k, sources, home, measureDuration[k], sums[t]));
             }
 
             outRoot.appendChild(part);
@@ -373,7 +372,6 @@ public abstract class PartResolutionScoreRebuilder
                     lastBase = null;
                 }
                 case "attributes" -> addTimed(sm, Kind.ATTRIBUTES, el, sp, cursor, pending);
-                case "direction" -> addTimed(sm, Kind.DIRECTION, el, sp, cursor, pending);
                 case "print" -> addTimed(sm, Kind.PRINT, el, sp, cursor, null);
                 case "barline" -> addTimed(
                         sm,
@@ -383,7 +381,9 @@ public abstract class PartResolutionScoreRebuilder
                         sp,
                         cursor,
                         null);
-                default -> addTimed(sm, Kind.OTHER, el, sp, cursor, pending);
+                default -> {
+                    // Directions (dynamics, words, wedges...), harmony, sound: not kept
+                }
             }
         }
 
@@ -509,7 +509,16 @@ public abstract class PartResolutionScoreRebuilder
             { "part-name", "part-abbreviation" }) {
                 final Element e = firstChild(scorePart, tag);
 
-                if ((e != null) && !e.getTextContent().isBlank()) {
+                if (n == SATB_NAMES.length) {
+                    final String name = "part-name".equals(tag) ? SATB_NAMES[t] : SATB_ABBREVIATIONS[t];
+
+                    if (e != null) {
+                        e.setTextContent(name);
+                        e.removeAttribute("print-object");
+                    } else if ("part-name".equals(tag)) {
+                        scorePart.insertBefore(textElement(out, tag, name), scorePart.getFirstChild());
+                    }
+                } else if ((e != null) && !e.getTextContent().isBlank()) {
                     e.setTextContent(e.getTextContent().trim() + " " + (t + 1));
                 }
             }
@@ -546,7 +555,6 @@ public abstract class PartResolutionScoreRebuilder
                                          int k,
                                          List<SourcePart> sources,
                                          int[] home,
-                                         int[] owner,
                                          int restDuration,
                                          int[] sums)
     {
@@ -556,8 +564,8 @@ public abstract class PartResolutionScoreRebuilder
 
         final List<Item> lead = new ArrayList<>();
         final List<Item> trail = new ArrayList<>();
-        final List<Item> startItems = new ArrayList<>(); // Attributes, directions at measure start
-        final List<Item> laterItems = new ArrayList<>(); // Items that follow a note
+        final List<Item> startItems = new ArrayList<>(); // Attributes at measure start
+        final List<Item> laterItems = new ArrayList<>(); // Attributes that follow a note
         final List<Item> notes = new ArrayList<>();
 
         for (Item it : homeMeasure.items) {
@@ -572,13 +580,8 @@ public abstract class PartResolutionScoreRebuilder
 
         for (int s = 0; s < sources.size(); s++) {
             for (Item it : sources.get(s).measures.get(k).items) {
-                if (it.kind == Kind.NOTE) {
-                    if (it.target == t) {
-                        notes.add(it);
-                    }
-                } else if (((it.kind == Kind.DIRECTION) || (it.kind == Kind.OTHER))
-                        && (owner[s] == t)) {
-                    (it.atStart ? startItems : laterItems).add(it);
+                if ((it.kind == Kind.NOTE) && (it.target == t)) {
+                    notes.add(it);
                 }
             }
         }
@@ -680,6 +683,8 @@ public abstract class PartResolutionScoreRebuilder
             voice.setTextContent("1"); // One voice per part
         }
 
+        stripMarkings(copy);
+
         if (it.dropChord) {
             final Element chord = firstChild(copy, "chord");
 
@@ -689,6 +694,31 @@ public abstract class PartResolutionScoreRebuilder
         }
 
         return copy;
+    }
+
+    /**
+     * Keep only what a singer's line needs: pitch, accidental, tie, slur (and tuplet brackets,
+     * which belong to the rhythm). Ornaments such as trills, articulations, fermatas and
+     * dynamics are removed.
+     */
+    private static void stripMarkings (Element note)
+    {
+        note.removeAttribute("dynamics");
+        note.removeAttribute("end-dynamics");
+
+        for (Element notations : childElements(note, "notations")) {
+            for (Element child : childElements(notations, null)) {
+                final String tag = child.getTagName();
+
+                if (!"tied".equals(tag) && !"slur".equals(tag) && !"tuplet".equals(tag)) {
+                    notations.removeChild(child);
+                }
+            }
+
+            if (childElements(notations, null).isEmpty()) {
+                note.removeChild(notations);
+            }
+        }
     }
 
     private static Element measureRest (Document out,
@@ -952,11 +982,9 @@ public abstract class PartResolutionScoreRebuilder
     {
         NOTE,
         ATTRIBUTES,
-        DIRECTION,
         PRINT,
         BARLINE_LEFT,
-        BARLINE_RIGHT,
-        OTHER
+        BARLINE_RIGHT
     }
 
     private static final class SourcePart

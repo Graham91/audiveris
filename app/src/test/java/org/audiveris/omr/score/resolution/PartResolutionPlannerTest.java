@@ -159,6 +159,13 @@ public class PartResolutionPlannerTest
         // Tenor and bass come from the bass staff, so they keep its clef
         assertEquals("F", part(result.document, "P3").getElementsByTagName("sign").item(0).getTextContent());
         assertEquals("G", part(result.document, "P2").getElementsByTagName("sign").item(0).getTextContent());
+
+        // Four parts are named after the voices
+        final NodeList names = result.document.getElementsByTagName("part-name");
+        assertEquals("Soprano", names.item(0).getTextContent());
+        assertEquals("Alto", names.item(1).getTextContent());
+        assertEquals("Tenor", names.item(2).getTextContent());
+        assertEquals("Bass", names.item(3).getTextContent());
     }
 
     @Test
@@ -340,6 +347,52 @@ public class PartResolutionPlannerTest
         assertTrue(result.errors.toString(), result.errors.isEmpty());
         assertTrue(result.barMismatches >= 1);
         assertFalse(result.warnings.isEmpty());
+    }
+
+    @Test
+    public void testDynamicsOrnamentsAndDirectionsAreDropped ()
+        throws Exception
+    {
+        final String xml = "<score-partwise version=\"4.0.3\"><part-list>"
+                + "<score-part id=\"P1\"><part-name>Voice</part-name></score-part></part-list>"
+                + "<part id=\"P1\"><measure number=\"1\">"
+                + "<attributes><divisions>1</divisions></attributes>"
+                + "<direction placement=\"below\"><direction-type><dynamics><f/></dynamics></direction-type></direction>"
+                + "<note id=\"a\" default-x=\"10\"><pitch><step>C</step><alter>1</alter><octave>4</octave></pitch>"
+                + "<duration>2</duration><voice>1</voice><accidental>sharp</accidental>"
+                + "<tie type=\"start\"/><notations><tied type=\"start\"/><slur type=\"start\" number=\"1\"/>"
+                + "<ornaments><trill-mark/></ornaments><articulations><accent/></articulations>"
+                + "<fermata/></notations></note>"
+                + "<note id=\"b\" default-x=\"60\"><pitch><step>C</step><alter>1</alter><octave>4</octave></pitch>"
+                + "<duration>2</duration><voice>1</voice><tie type=\"stop\"/>"
+                + "<notations><ornaments><trill-mark/></ornaments></notations></note>"
+                + "</measure></part></score-partwise>";
+
+        final List<PartResolutionSidecar.NoteRecord> records = new ArrayList<>();
+        records.add(record("a", "P1"));
+        records.add(record("b", "P1"));
+
+        final PartResolutionScoreRebuilder.Result result = PartResolutionScoreRebuilder.rebuild(
+                parse(xml),
+                records,
+                List.of("P1"));
+
+        assertTrue(result.errors.toString(), result.errors.isEmpty());
+
+        final Element p1 = part(result.document, "P1");
+        assertEquals(0, p1.getElementsByTagName("direction").getLength());
+        assertEquals(0, p1.getElementsByTagName("dynamics").getLength());
+        assertEquals(0, p1.getElementsByTagName("trill-mark").getLength());
+        assertEquals(0, p1.getElementsByTagName("articulations").getLength());
+        assertEquals(0, p1.getElementsByTagName("fermata").getLength());
+
+        // Pitch, accidental, tie and slur survive; a note left with no notations loses the tag
+        assertEquals(1, p1.getElementsByTagName("slur").getLength());
+        assertEquals(1, p1.getElementsByTagName("tied").getLength());
+        assertEquals(2, p1.getElementsByTagName("tie").getLength());
+        assertEquals(1, p1.getElementsByTagName("accidental").getLength());
+        assertEquals(2, p1.getElementsByTagName("alter").getLength());
+        assertEquals(1, p1.getElementsByTagName("notations").getLength());
     }
 
     @Test
